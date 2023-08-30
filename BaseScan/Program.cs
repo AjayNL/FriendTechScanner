@@ -7,9 +7,12 @@ using System.Net.Http;
 using System.Net.Mail;
 using System.Net.Security;
 using System.Numerics;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Xml.Linq;
+using BaseScan.Resources;
+using BaseScan.Utils;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -41,9 +44,8 @@ class Program
     static async Task Main()
     {
         List<string> AdressesDone = new List<string>();
-        string startBlock = "3000446";
+        string startBlock = "3301533";
         string currentBlock = startBlock;
-        string apiKey = "YBJCUNHES8VTNC8QVP8M7WVHQXINPQ35NF";
         List<string> celebs = new List<string>();
         bool foundCeleb;
 
@@ -70,114 +72,78 @@ class Program
         while (true)
         {
             foundCeleb = false;
-            string apiUrl = $"https://api.basescan.org/api?module=account&action=txlist&address=0xcf205808ed36593aa40a44f10c7f7c2f67d4a4d4&startblock={startBlock}&endblock=99999999&sort=desc&apikey={apiKey}";
+            List<TransactionInfo> transactions = await TransactionHelper.GetTransactions(startBlock, Constants.friendTechAccount);
 
-            using (HttpClient httpClient = new HttpClient())
+            foreach (TransactionInfo info in transactions)
             {
-                HttpResponseMessage response = await httpClient.GetAsync(apiUrl);
-
-                if (response.IsSuccessStatusCode)
+                if (!AdressesDone.Contains(info.from))
                 {
-                    string jsonResponse = await response.Content.ReadAsStringAsync();
-                    JObject responseObj = JObject.Parse(jsonResponse);
-
-                    if (responseObj["status"].ToString() == "1")
+                    DateTimeOffset dateTimeValue = DateTimeOffset.FromUnixTimeSeconds(long.Parse(info.timeStamp));
+                    MethodInfo methodInfo = TransactionDetails(info);
+                                
+                    if (methodInfo != null)
                     {
-                        JArray entries = JArray.Parse(responseObj["result"].ToString());                                              
-                        foreach (JObject entry in entries)
+                        AdressesDone.Add(info.from);
+
+                        bool hasMaxTransactions = await TransactionHelper.hasMaxTransactions(info.from, 10);
+
+                        UserData friendTechData = await GetUserDetailsAsync(info.from);
+                        if (friendTechData?.TwitterName?.Trim() != "")
                         {
-                            string fromAddress = entry["from"].ToString();
-                            currentBlock = entry["blockNumber"].ToString();
-                            if (!AdressesDone.Contains(fromAddress))
+                            Debug.WriteLine($"Block {currentBlock} / Twittername: {friendTechData.TwitterName}");
+                            Debug.WriteLine($"https://twitter.com/{friendTechData.TwitterUsername}");
+                            Debug.WriteLine($"Holdercount: {friendTechData.HolderCount}");
+                            Debug.WriteLine($"Max transactions: {hasMaxTransactions}");
+                            Debug.WriteLine($"Address: {info.from}");
+
+                            if (long.TryParse(friendTechData.DisplayPrice, out long priceInGwei))
                             {
-                                string value = entry["value"].ToString();
-
-                                string timestamp = entry["timeStamp"].ToString();
-                                DateTimeOffset dateTimeValue = DateTimeOffset.FromUnixTimeSeconds(long.Parse(timestamp));
-                                MethodInfo info = TransactionDetails(entry);
-
-                                if (info != null)
-                                {
-                                    AdressesDone.Add(fromAddress);
-
-                                    UserData friendTechData = await GetUserDetailsAsync(fromAddress);
-                                    if (friendTechData?.TwitterName?.Trim() != "")
-                                    {
-                                        Debug.WriteLine($"Block {currentBlock} / Twittername: {friendTechData.TwitterName}");
-                                        Debug.WriteLine($"https://twitter.com/{friendTechData.TwitterUsername}");
-                                        Debug.WriteLine($"Holdercount: {friendTechData.HolderCount}");
-
-                                        if (long.TryParse(friendTechData.DisplayPrice, out long priceInGwei))
-                                        {
-                                            Debug.WriteLine($"Price: {priceInGwei * 0.000000000000000001}");
-                                        }
-                                        if (celebs.Contains(friendTechData.TwitterUsername))
-                                        {
-                                            Debug.WriteLine($"CELEBRITY");
-                                            foundCeleb = true;
-                                            //SendMail($"https://twitter.com/{friendTechData.TwitterUsername}");
-                                        }
-
-                                        Debug.WriteLine($"");
-                                    }
-                                }
+                                Debug.WriteLine($"Price: {priceInGwei * 0.000000000000000001}");
                             }
+                            if (celebs.Contains(friendTechData.TwitterUsername))
+                            {
+                                Debug.WriteLine($"CELEBRITY");
+                                foundCeleb = true;
+                            }
+
+                            Debug.WriteLine($"");
                         }
                     }
-                    else
-                    {
-                        Console.WriteLine("API response indicated an error.");
-                    }
                 }
-                else
-                {
-                    Console.WriteLine($"HTTP request failed with status code: {response.StatusCode}");
-                }
-
-                startBlock = currentBlock;
-                if (foundCeleb)
-                {
-                    Debug.WriteLine("------------");
-                    Debug.WriteLine("FOUND CELEB!");
-                    Debug.WriteLine("------------");
-                }
-
-                Debug.WriteLine("------------Waiting------------");
-                Debug.WriteLine("");
-                Thread.Sleep(60 * 1000);
             }
+            startBlock = currentBlock;
+            if (foundCeleb)
+            {
+                Debug.WriteLine("------------");
+                Debug.WriteLine("FOUND CELEB!");
+                Debug.WriteLine("------------");
+            }
+
+            Debug.WriteLine("------------Waiting------------");
+            Debug.WriteLine("");
+            Thread.Sleep(60 * 1000);
         }
     }
 
-    private static MethodInfo TransactionDetails(JObject entry)
+    private static MethodInfo TransactionDetails(TransactionInfo info)
     {
-        string function = entry["functionName"].ToString();
-        if (function.StartsWith("buyShares"))
+        if (info.functionName.StartsWith("buyShares"))
         {
-            string input = entry["input"].ToString();
-            string fromAddress = entry["from"].ToString();
+            MethodInfo value = new MethodInfo();
+            
+            string sharesSubjectHex = info.input.Substring(10, 64); // Next 32 bytes (address)
+            string amountHex = info.input.Substring(74, 64); // Next 32 bytes (uint256)
 
-            MethodInfo info = GetMethodValue(input);
-            if (info.sharesSubject == fromAddress) 
+            // Convert hexadecimal values to their respective data types
+            value.sharesSubject = "0x" + sharesSubjectHex.Substring(24); // Address starts from 24th character
+            value.AmountBought = BigInteger.Parse(amountHex, System.Globalization.NumberStyles.HexNumber);
+
+            if (value.sharesSubject == info.from) 
             {
-                return info;
+                return value;
             }
         }
         return null;
-    }
-
-    private static MethodInfo GetMethodValue(string input)
-    {
-        MethodInfo value = new MethodInfo();
-       
-        string sharesSubjectHex = input.Substring(10, 64); // Next 32 bytes (address)
-        string amountHex = input.Substring(74, 64); // Next 32 bytes (uint256)
-
-        // Convert hexadecimal values to their respective data types
-        value.sharesSubject = "0x" + sharesSubjectHex.Substring(24); // Address starts from 24th character
-        value.AmountBought = BigInteger.Parse(amountHex, System.Globalization.NumberStyles.HexNumber);
-
-        return value;
     }
 
     private static async Task<UserData> GetUserDetailsAsync(string address)
