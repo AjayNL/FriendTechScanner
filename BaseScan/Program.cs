@@ -115,7 +115,7 @@ class Program
                                         {
                                             Debug.WriteLine($"CELEBRITY");
                                             foundCeleb = true;
-                                            SendMail($"https://twitter.com/{friendTechData.TwitterUsername}");
+                                            //SendMail($"https://twitter.com/{friendTechData.TwitterUsername}");
                                         }
 
                                         Debug.WriteLine($"");
@@ -211,12 +211,12 @@ class Program
 
     private static void SendMail(string body)
     {
-        string senderEmail = "a.jellema@chipsoft.com";
-        string senderPassword = "problem@TURNERY6krona";
-        string recipientEmail = "aran24@home.nl";
+        string senderEmail = "";
+        string senderPassword = "";
+        string recipientEmail = "";
         string subject = "FriendTech";
 
-        SmtpClient smtpClient = new SmtpClient("smtp.chipsoft.com")
+        SmtpClient smtpClient = new SmtpClient("")
         {
             Port = 587,
             Credentials = new NetworkCredential(senderEmail, senderPassword),
